@@ -6,7 +6,10 @@ import requests
 import sqlite3
 import schedule
 import time
+from threading import Thread
 
+
+stop_ex = False
 
 def execute(cursor, cursor_1):
     cursor.execute("SELECT * FROM games")
@@ -66,7 +69,7 @@ def updating_data(cursor, conn, rows, rows1):
 
 
 
-url = 'https://store.playstation.com/en-us/category/3f772501-f6f8-49b7-abac-874a88ca4897/1'
+url = 'https://store.playstation.com/en-tr/category/3f772501-f6f8-49b7-abac-874a88ca4897/1'
 respons = requests.get(url, timeout=10)
 bs = BeautifulSoup(respons.content, 'html.parser')
 latest = bs.find('ol', attrs={'class': "psw-l-space-x-1 psw-l-line-center psw-list-style-none"}).find_all('span', attrs={'class': "psw-fill-x"})
@@ -106,7 +109,7 @@ async def get_offer_time(session, url_offer, old_value="Not defined", retries=3,
 
 
 async def fetch_page(session, page_num):
-    url = 'https://store.playstation.com/en-us/category/3f772501-f6f8-49b7-abac-874a88ca4897/{}'.format(page_num)
+    url = 'https://store.playstation.com/en-tr/category/3f772501-f6f8-49b7-abac-874a88ca4897/{}'.format(page_num)
     print(f"📥 Fetching page {page_num}...")
 
     try:
@@ -240,15 +243,46 @@ def job():
 
 
 
+async def start_scraper(hours: int):
+    global stop_ex
+    stop_ex = False
+    # bedore the changing timer all of the task is cleared
+    schedule.clear()
 
+    # deponding on job function extract by timing 
+    schedule.every(hours).minutes.do(job)
+    print(f"⏳ Scraper scheduled every {hours} hours.")
 
-def start_scraper(nu_time):
-    # job()
-    schedule.every(nu_time).hours.do(job)
+    while not stop_ex:
+        await asyncio.sleep(1) 
+
+    print('The Data Extracting is stopped by user')
+    
+
+def stop_scraper():
+    global stop_ex
+    stop_ex = True
+    schedule.clear() 
+    print('The Stop function is called and schedule cleared!!')
+
+def run_schedule():
     while True:
-        schedule.run_pending()
-        time.sleep(1)
-# start_scraper(24)
+            schedule.run_pending()
+            time.sleep(1)
+
+    # running at the different tiime
+t = Thread(target=run_schedule, daemon=True)
+t.start()
+
+
+
+# def start_scraper(nu_time):
+#     # job()
+#     schedule.every(nu_time).hours.do(job)
+#     while True:
+#         schedule.run_pending()
+#         time.sleep(1)
+# # start_scraper(24)
 
 
 
