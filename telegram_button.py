@@ -17,6 +17,7 @@ is_sending = False
 sending_task = None 
 status_ex = None
 waiting_for_time = {}
+pass_word_admin = '1234'
 
 def is_admin(user):
     return user in admins
@@ -94,6 +95,8 @@ async def main_inlines():
         InlineKeyboardButton('Start Exracting data (right now)', callback_data= 'Extracting now')
     ],[
         InlineKeyboardButton('Delete the whole DataBase', callback_data= 'Deleting DataBase')
+    ],[
+        InlineKeyboardButton('Change your password ', callback_data= 'Change_pass')
     ]
     
     return InlineKeyboardMarkup(keyboards)
@@ -215,25 +218,52 @@ async def extracting_now(query, update, context):
 async def extracting_yes_now(query, update, context):
     user = update.effective_user.id
     await query.edit_message_text('<b>Enter the password :</b>',parse_mode='html')
-    waiting_for_time[user]= True
+    waiting_for_time.pop(user, None)
+    waiting_for_time[user] = "waiting_for_password"
+
 
 async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):   
+    global pass_word_admin
     user = update.effective_user.id
-    pass_word_default = 1234
-    if user in waiting_for_time and waiting_for_time[user] == True:
+    
+    if user in waiting_for_time and waiting_for_time[user] == "waiting_for_password":
+        
         try:
-            pass_word = update.message.text
-            if pass_word == pass_word_default:
-                waiting_for_time.clear()
-                await context.bot.send_message(chat_id=user,text='<b>The Extracting data is started! ✅</b>',parse_mode='html')
-                stop_scraper()
-                job()
-            else:
-                await context.bot.send_message(chat_id=user,text='<b>The Password is wrong! ❌</b>',parse_mode='html')
-        except ValueError:
-            await context.bot.send_message(chat_id= user , text='<b>Please just enter a text</b>',
-                    parse_mode='html')
+            if not update.message or not update.message.text:
+                await context.bot.send_message(
+                    chat_id=user,
+                    text='<b>Please send a text message (not a photo or sticker).</b>',
+                    parse_mode='html'
+                )
+                return
             
+            pass_word = update.message.text.strip()
+
+            
+            if pass_word == pass_word_admin:
+                waiting_for_time.pop(user)
+
+                await context.bot.send_message(
+                    chat_id=user,
+                    text='<b>✅ Password correct!\nStarting data extraction...</b>',
+                    parse_mode='html'
+                )
+                stop_scraper()
+                await asyncio.to_thread(job)
+
+            else:
+                await context.bot.send_message(
+                    chat_id=user,
+                    text='<b>❌ Wrong password! Try again.</b>',
+                    parse_mode='html'
+                )
+
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=user,
+                text=f'<b>An unexpected error occurred:</b>\n<code>{e}</code>',
+                parse_mode='html'
+            )            
 async def extracting_no_now(query, update, context):
     await query.edit_message_text('<b>The Extracting data is canceled! ❌</b>',parse_mode='html')
 
@@ -245,6 +275,7 @@ async def extracting_yes_timing(query, update, context):
     global status_ex
     user = update.effective_user.id
     if not status_ex:
+        waiting_for_time.pop(user, None)
         waiting_for_time[user] = True
         await query.edit_message_text('<b>How often do you want the data Extraction to be repeated?</b>\nPleace inter a number (In hours):',
                     parse_mode='html')
@@ -307,27 +338,130 @@ async def deleting_no_database(query, update, context):
 async def back(query, update, context):
     mark_up = await(main_inlines())
     await query.edit_message_text('Please choose one:', reply_markup = mark_up)
+# change password ---------- function button
+async def change_pass(query, update, context):
+    await confirm_action(query,'Do you want to Change your password? ⚠️','Yes_pass','No_pass' )
+
+async def yes_pass_change(query, update, context):
+    user = update.effective_user.id
+    waiting_for_time.pop(user, None)
+    waiting_for_time[user] = 'waiting_old_password'
+    await query.edit_message_text('<b>Enter your current password: </b>', parse_mode='html')
+    
+async def changing_pass( update, context):
+    global pass_word_admin
+    user = update.effective_user.id
+    if user in waiting_for_time and waiting_for_time[user] == 'waiting_old_password':
+        try:
+            if not update.message or not update.message.text:
+                await context.bot.send_message(
+                    chat_id=user,
+                    text='<b>Please send a text message (not a photo or sticker).</b>',
+                    parse_mode='html'
+                )
+                return
+            text = update.message.text.strip()
+
+            if waiting_for_time.get(user) == 'waiting_old_password':
+                if text != pass_word_admin:
+                    await context.bot.send_message(chat_id = user, text = '<b>Your Password is wrong! </b>⚠️\nPlease enter your current password: ',parse_mode = 'html')
+            
+                else:
+                    waiting_for_time[user] = 'waiting_new_password'
+                    await context.bot.send_message(chat_id = user, text = '<b>Enter your new password: </b>',parse_mode = 'html')
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=user,
+                text=f'<b>An unexpected error occurred:</b>\n<code>{e}</code>',
+                parse_mode='html'
+            )
+async def set_new_password(update, context):
+    global pass_word_admin
+    user = update.effective_user.id
+    if user in waiting_for_time and waiting_for_time[user] == 'waiting_new_password':
+        try:
+            if not update.message or not update.message.text:
+                await context.bot.send_message(
+                    chat_id=user,
+                    text='<b>Please send a text message (not a photo or sticker).</b>',
+                    parse_mode='html'
+                )
+                return
+
+            new_pass = update.message.text.strip()
+            pass_word_admin = new_pass
+            waiting_for_time.pop(user, None)
+
+            await context.bot.send_message(
+                chat_id=user,
+                text=f'<b>Password changed successfully ✅</b>\nYour new password: <code>{new_pass}</code>',
+                parse_mode='html'
+            )
+
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=user,
+                text=f'<b>An unexpected error occurred:</b>\n<code>{e}</code>',
+                parse_mode='html'
+            )
+
+async def no_pass_change(query, update, context):
+    await query.edit_message_text('<b>Changing password is canceled! ❌</b>', parse_mode='html')
+
+async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user.id
+
+    if user in waiting_for_time and waiting_for_time[user] == "waiting_for_password":
+        await get_password(update, context)
+
+ 
+    elif user in waiting_for_time and waiting_for_time[user] == True:
+        await get_user_input(update, context)
+
+    elif user in waiting_for_time and waiting_for_time[user] == 'waiting_old_password':
+        await changing_pass(update, context)
+
+    elif user in waiting_for_time and waiting_for_time[user] == 'waiting_new_password':
+        await set_new_password(update, context)
+
+    else:
+        await context.bot.send_message(
+            chat_id=user,
+            text="Unexpected type of data⚠️",
+            parse_mode="html"
+        )
 
 dictionary_query = {
+    # Sending Posts
     'Start sending': start_sending,
     'Yes': start_yes_sending,
     'No': start_no_sending,
     'Stop sending':stop_sending,
     'Yes_stop': stop_yes_sending,
     'No_stop': stop_no_sending,
+    # Extracting Data
+    #### Now
     'Extracting now': extracting_now,
     'Yes_extract': extracting_yes_now,
     'No_extract': extracting_no_now,
+    #### By Timing Start
     'Extracting_timing': extracting_timing,
     'Yes_extract_time': extracting_yes_timing,
     'No_extract_time': extracting_no_timing,
+    #### By Timing Stop
     'Stop_extracting': stop_extracting,
     'yes_stop_ex': yes_stop_ex,
-    'no_stop_ex' : yes_stop_ex,
+    'no_stop_ex' : no_stop_ex,
+    # Deleting Data Base
     'Deleting DataBase': deleting_database,
     'Yes_delete': deleting_yes_database,
     'No_delete': deleting_no_database,
-    'back': back
+    # Back
+    'back': back,
+    # Setting Password
+    'Change_pass': change_pass,
+    'Yes_pass': yes_pass_change,
+    'No_pass': no_pass_change
 }
 # button function -----------    
 async def button(update : Update, context: ContextTypes.DEFAULT_TYPE):
@@ -341,8 +475,7 @@ def main():
     app = Application.builder().token(tk).build()
     app.add_handler(CommandHandler('start',start, block= False))
     app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND , get_user_input ))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND , get_password ))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_input))
     app.run_polling(allowed_updates= Update.ALL_TYPES)
 
 
