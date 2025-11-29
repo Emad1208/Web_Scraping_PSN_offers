@@ -2,12 +2,12 @@ from decouple import config
 import asyncio
 import aiosqlite
 import aiohttp
-import threading
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler ,filters
 from telegram.error import RetryAfter, BadRequest
 from datetime import datetime
 from pagination_aiohttp_DB import start_scraper , stop_scraper, job
+import os
 
 
 tk = config('token')
@@ -16,21 +16,43 @@ admins = [1725178616]
 is_sending = False
 sending_task = None 
 status_ex = None
+status_send = None
 waiting_for_time = {}
 pass_word_admin = '1234'
+Db_FILE = "games.db"
+class State:
+    WAITING_PASSWORD = "waiting_password"
+    WAITING_HOURS = "waiting_hours"
+    WAITING_OLD_PASS = "waiting_old_pass"
+    WAITING_NEW_PASS = "waiting_new_pass"
+    WAITING_SEND_HOURS = "waiting_send_hours" 
+
+
+def delete_DB():
+    db_path = r"D:\Drive D\Python\Exercise_WebScraping\PSN\games.db"
+
+    if os.path.exists(db_path):
+        os.remove(db_path)
+        print("Database removed successfully!")
+    else:
+        print("Database file not found.")
+
 
 def is_admin(user):
     return user in admins
 
 async def read_posts_from_db(status_filter=0):
-    async with aiosqlite.connect("games.db") as conn:
+    if not os.path.exists(Db_FILE):
+        return None  # Database is not exist
+    
+    async with aiosqlite.connect(Db_FILE) as conn:
         async with conn.execute('''
             SELECT title, link, offer_time, platforms, discount, offer_price, original_price, picture, type_post
             FROM games
             WHERE status = ?
         ''', (status_filter,)) as cursor:
             posts = await cursor.fetchall() 
-            return posts
+            return posts if posts else []
 
 async def mark_post_as_sent(link: str):
     async with aiosqlite.connect("games.db") as conn:
@@ -116,6 +138,7 @@ async def confirm_action(query, text, yes_call_back, no_call_back):
 # start command
 async def start(update : Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.id
+    waiting_for_time.pop(user, None)
     if is_admin(user):
         mark_up = await main_inlines()
         await update.message.reply_text('Please choose one:', reply_markup = mark_up)
@@ -125,32 +148,42 @@ async def start_sending(query, update, context):
     await confirm_action(query,'Do you want to start the sending posts?','Yes','No')
 
 async def start_yes_sending(query, update, context):
-    global is_sending, sending_task
+    global status_send
 
     user = update.effective_user.id
     if is_admin(user):
         if is_sending:  # task is running
             await query.edit_message_text("<b>⚠️ Already running!</b>", parse_mode='html')
             return
-        
-        await query.edit_message_text("<b>The start sending posts is active! ✅</b>", parse_mode='html')
-        is_sending = True
-        # create a task
-        sending_task = asyncio.create_task(send_posts_loop(update, context))
+        elif not status_send:
+            waiting_for_time.pop(user, None)
+            waiting_for_time[user] = {"state": State.WAITING_SEND_HOURS}
+            await query.edit_message_text('<b>How often do you want the sending process to be repeated?</b>\nPleace inter a number (In minutes):'
+                    , parse_mode='html')
+            
 
 async def send_posts_loop(update, context):
     default_image = 'https://gmedia.playstation.com/is/image/SIEPDC/ps-store-evergreen-image-block-01-en-09aug22?$1600px$'
-    global is_sending
+    global is_sending, status_send
     while is_sending:
             today = datetime.now().strftime("%m/%d/%Y")
-            
-            posts = await read_posts_from_db(status_filter=0)  
+            posts = await read_posts_from_db(status_filter=0)
+
+            if posts is None:
+                # DataBase is not exist
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="DataBase is not exist ! ⚠️"
+                )
+                await asyncio.sleep(1 * 3600 )  # repeating every one hour
+                continue
+
+              
             if not posts:
-                print("⏳ No new posts, checking again in 10s...")
                 await context.bot.send_message(chat_id = update.effective_chat.id,
                     text = '💯💯 All of the posts in Data Base is sent \n Date: {}'.format(today))
                 # timing for re-scan the DataBase
-                await asyncio.sleep(100)   #            await asyncio.sleep(3 * 3600 + 30 * 60)  3 hours and 30 minutes
+                await asyncio.sleep(4 * 3600)   #            await asyncio.sleep(3 * 3600 + 30 * 60)  3 hours and 30 minutes
                 continue
             
             for idx, post in enumerate(posts, start=1):
@@ -174,7 +207,7 @@ async def send_posts_loop(update, context):
                     await mark_post_as_sent(Title_Link)
                     print(f"✅ Post {idx} sent: {Title}")
                     # timing for sending posts
-                    await asyncio.sleep(10)  
+                    await asyncio.sleep(status_send)  
                     
                 except RetryAfter as e:
                     wait_time = int(e.retry_after)
@@ -196,17 +229,20 @@ async def start_no_sending(query, update, context):
 # Stop sending posts ------------- function button
 async def stop_sending(query, update, context):
     await confirm_action(query, 'Do you want to stop the sending posts?','Yes_stop','No_stop')
-    
+
+async def request_password(user, context, reason_text, action):
+    waiting_for_time[user] = {"state": State.WAITING_PASSWORD, "action": action}
+    await context.bot.send_message(
+        chat_id=user,
+        text=f"<b>{reason_text}</b>",
+        parse_mode='html'
+    )
+
+
 async def stop_yes_sending(query, update, context):
-    global is_sending, sending_task
-    if is_sending:
-        is_sending = False
-        if sending_task:
-            sending_task.cancel()
-            sending_task = None
-        await query.edit_message_text("<b>❌ Sending stopped!</b>", parse_mode='html')
-    else:
-        await query.edit_message_text("<b>⚠️ Nothing is running!</b>", parse_mode='html')
+    user = update.effective_user.id
+    await request_password(user, context, "Enter password to stop sending:", "stop_sending")
+
 
 async def stop_no_sending(query, update, context):
     await query.edit_message_text('<b>The sending posts is not stopped! ❌</b>',parse_mode='html')
@@ -217,53 +253,98 @@ async def extracting_now(query, update, context):
 
 async def extracting_yes_now(query, update, context):
     user = update.effective_user.id
-    await query.edit_message_text('<b>Enter the password :</b>',parse_mode='html')
-    waiting_for_time.pop(user, None)
-    waiting_for_time[user] = "waiting_for_password"
+    await request_password(user, context, "Enter the password to start extraction:", "extract_now")
 
 
 async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):   
-    global pass_word_admin
+    global pass_word_admin, is_sending, sending_task
     user = update.effective_user.id
-    
-    if user in waiting_for_time and waiting_for_time[user] == "waiting_for_password":
+
+    if user in waiting_for_time and waiting_for_time[user]["state"] == State.WAITING_PASSWORD:
+
+        action = waiting_for_time[user]["action"]  # Type of action
+
+        if not update.message or not update.message.text:
+            await context.bot.send_message(
+                chat_id=user,
+                text='<b>Please send a text message (not a photo or sticker).</b>',
+                parse_mode='html'
+            )
+            return
         
-        try:
-            if not update.message or not update.message.text:
+        pass_word = update.message.text.strip()
+
+        if pass_word != pass_word_admin:
+            await context.bot.send_message(
+                chat_id=user,
+                text='<b>❌ Wrong password! Try again.</b>',
+                parse_mode='html'
+            )
+            return
+        
+        # run   → if password is correct
+        waiting_for_time.pop(user)
+
+        if action == "stop_sending":
+            if is_sending:
+                is_sending = False
+                if sending_task:
+                    sending_task.cancel()
+                    sending_task = None
+                
                 await context.bot.send_message(
                     chat_id=user,
-                    text='<b>Please send a text message (not a photo or sticker).</b>',
+                    text="<b>✅ Sending stopped successfully!</b>",
                     parse_mode='html'
                 )
-                return
-            
-            pass_word = update.message.text.strip()
-
-            
-            if pass_word == pass_word_admin:
-                waiting_for_time.pop(user)
-
-                await context.bot.send_message(
-                    chat_id=user,
-                    text='<b>✅ Password correct!\nStarting data extraction...</b>',
-                    parse_mode='html'
-                )
-                stop_scraper()
-                await asyncio.to_thread(job)
-
             else:
                 await context.bot.send_message(
                     chat_id=user,
-                    text='<b>❌ Wrong password! Try again.</b>',
+                    text="<b>⚠️ Nothing is running!</b>",
                     parse_mode='html'
                 )
+            return
 
-        except Exception as e:
+        elif action == "stop_extracting_time":
+            global status_ex
+            if not status_ex:
+                await context.bot.send_message(
+                    chat_id=user,
+                    text ="<b>⚠️ Nothing is running!</b>",
+                    parse_mode='html'
+                    )
+                return
+            stop_scraper()
+            status_ex = None
+            waiting_for_time.clear()
             await context.bot.send_message(
                 chat_id=user,
-                text=f'<b>An unexpected error occurred:</b>\n<code>{e}</code>',
+                text = '<b>Stopping Data Extracting is successful! ✅</b>',
                 parse_mode='html'
-            )            
+                )
+            return
+
+
+        elif action == "extract_now":
+            stop_scraper()
+            await context.bot.send_message(
+                chat_id=user,
+                text="<b>Extraction Started ✅</b>",
+                parse_mode='html'
+            )
+            await asyncio.to_thread(job)
+            return
+        
+        elif action == "deleting_DB":
+            delete_DB()
+            await context.bot.send_message(
+                chat_id=user,
+                text = '<b>The whole DataBase is deleted! ✅</b>', 
+                parse_mode='html')
+            
+        # if you have more actions add them here
+
+
 async def extracting_no_now(query, update, context):
     await query.edit_message_text('<b>The Extracting data is canceled! ❌</b>',parse_mode='html')
 
@@ -276,7 +357,7 @@ async def extracting_yes_timing(query, update, context):
     user = update.effective_user.id
     if not status_ex:
         waiting_for_time.pop(user, None)
-        waiting_for_time[user] = True
+        waiting_for_time[user] = {"state": State.WAITING_HOURS}
         await query.edit_message_text('<b>How often do you want the data Extraction to be repeated?</b>\nPleace inter a number (In hours):',
                     parse_mode='html')
     else:
@@ -284,9 +365,9 @@ async def extracting_yes_timing(query, update, context):
                 parse_mode='html')
     
 async def get_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global status_ex
+    global status_ex, status_send, sending_task,is_sending
     user = update.effective_user.id
-    if user in waiting_for_time and waiting_for_time[user] == True:
+    if user in waiting_for_time and waiting_for_time[user]["state"] == State.WAITING_HOURS:
         if not status_ex:
             try:
                 hours = int(update.message.text)
@@ -302,6 +383,26 @@ async def get_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='html')    
         else:
             pass
+    elif user in waiting_for_time and waiting_for_time[user]["state"] == State.WAITING_SEND_HOURS:
+        if not status_send:
+            try:
+                minutes = int(update.message.text)
+                if minutes < 10 or minutes > 60:
+                    await context.bot.send_message(chat_id= user, text= '<b>Your number must be between 10 and 60</b>',parse_mode='html')
+                else:
+                    waiting_for_time[user] = False
+                    is_sending = True
+            # create a task
+                    sending_task = asyncio.create_task(send_posts_loop(update, context))
+                    await context.bot.send_message(chat_id= user, 
+                            text='<b>Your sending process will be repeated evry {} minutes</b>\n<b>The start sending posts is active! ✅</b>'.format(minutes),
+                        parse_mode='html')
+                    status_send = minutes * 60
+            except ValueError:
+                await context.bot.send_message(chat_id= user , text='<b>Please just enter a number</b>',
+                    parse_mode='html')    
+        else:
+            pass
 
 async def extracting_no_timing(query, update, context):
     await query.edit_message_text('<b>The data Extracting is canceled! ❌</b>',
@@ -312,14 +413,8 @@ async def stop_extracting(query, update, context):
     await confirm_action(query, 'Do you want to Stop Data Extracting ? ⚠️', 'yes_stop_ex','no_stop_ex')
 
 async def yes_stop_ex(query, update, context):
-    global status_ex
-    if not status_ex:
-        await query.edit_message_text("<b>⚠️ Nothing is running!</b>", parse_mode='html')
-        return
-    stop_scraper()
-    status_ex = None
-    waiting_for_time.clear()
-    await query.edit_message_text('<b>Stopping Data Extracting is successful! ✅</b>', parse_mode='html')
+    user = update.effective_user.id
+    await request_password(user, context, "Enter the password to start extraction:", "stop_extracting_time")
 
 async def no_stop_ex(query, update, context):
     await query.edit_message_text('<b>Stopping Data Extracting is canceled! ❌</b>', parse_mode='html')
@@ -329,14 +424,15 @@ async def deleting_database(query, update, context):
     await confirm_action(query, 'Are sure about deleting the whole DataBase? ⚠️','Yes_delete','No_delete')
     
 async def deleting_yes_database(query, update, context):
-    await query.edit_message_text('<b>The whole DataBase is deleted! ✅</b>', parse_mode='html')
+    user = update.effective_user.id
+    await request_password(user, context, "Enter the password to start extraction:", "deleting_DB")
 
 async def deleting_no_database(query, update, context):
     await query.edit_message_text('<b>Deleting DataBase is canceled! ❌</b>', parse_mode='html')
 
 # back --------- function button
 async def back(query, update, context):
-    mark_up = await(main_inlines())
+    mark_up = await main_inlines()
     await query.edit_message_text('Please choose one:', reply_markup = mark_up)
 # change password ---------- function button
 async def change_pass(query, update, context):
@@ -345,13 +441,13 @@ async def change_pass(query, update, context):
 async def yes_pass_change(query, update, context):
     user = update.effective_user.id
     waiting_for_time.pop(user, None)
-    waiting_for_time[user] = 'waiting_old_password'
+    waiting_for_time[user] = {"state": State.WAITING_OLD_PASS}
     await query.edit_message_text('<b>Enter your current password: </b>', parse_mode='html')
     
 async def changing_pass( update, context):
     global pass_word_admin
     user = update.effective_user.id
-    if user in waiting_for_time and waiting_for_time[user] == 'waiting_old_password':
+    if waiting_for_time[user]["state"] == State.WAITING_OLD_PASS:
         try:
             if not update.message or not update.message.text:
                 await context.bot.send_message(
@@ -362,23 +458,26 @@ async def changing_pass( update, context):
                 return
             text = update.message.text.strip()
 
-            if waiting_for_time.get(user) == 'waiting_old_password':
+            if user in waiting_for_time and waiting_for_time[user]["state"] == State.WAITING_OLD_PASS:
+
                 if text != pass_word_admin:
                     await context.bot.send_message(chat_id = user, text = '<b>Your Password is wrong! </b>⚠️\nPlease enter your current password: ',parse_mode = 'html')
             
                 else:
-                    waiting_for_time[user] = 'waiting_new_password'
-                    await context.bot.send_message(chat_id = user, text = '<b>Enter your new password: </b>',parse_mode = 'html')
+                    waiting_for_time[user] = {"state": State.WAITING_NEW_PASS}
+                    await context.bot.send_message(chat_id = user,
+                                 text = '<b>Enter your new password: </b>',parse_mode = 'html')
         except Exception as e:
             await context.bot.send_message(
                 chat_id=user,
                 text=f'<b>An unexpected error occurred:</b>\n<code>{e}</code>',
                 parse_mode='html'
             )
+
 async def set_new_password(update, context):
     global pass_word_admin
     user = update.effective_user.id
-    if user in waiting_for_time and waiting_for_time[user] == 'waiting_new_password':
+    if user in waiting_for_time and waiting_for_time[user]["state"] == State.WAITING_NEW_PASS:
         try:
             if not update.message or not update.message.text:
                 await context.bot.send_message(
@@ -411,25 +510,37 @@ async def no_pass_change(query, update, context):
 async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.id
 
-    if user in waiting_for_time and waiting_for_time[user] == "waiting_for_password":
-        await get_password(update, context)
-
- 
-    elif user in waiting_for_time and waiting_for_time[user] == True:
-        await get_user_input(update, context)
-
-    elif user in waiting_for_time and waiting_for_time[user] == 'waiting_old_password':
-        await changing_pass(update, context)
-
-    elif user in waiting_for_time and waiting_for_time[user] == 'waiting_new_password':
-        await set_new_password(update, context)
-
-    else:
-        await context.bot.send_message(
+    if user not in waiting_for_time:
+        return await context.bot.send_message(
             chat_id=user,
             text="Unexpected type of data⚠️",
             parse_mode="html"
         )
+
+    state = waiting_for_time[user].get("state")
+
+    if state == State.WAITING_PASSWORD:
+        return await get_password(update, context)
+
+    elif state == State.WAITING_HOURS:
+        return await get_user_input(update, context)
+    
+    elif state == State.WAITING_SEND_HOURS:
+        return await get_user_input(update, context)
+
+    elif state == State.WAITING_OLD_PASS:
+        return await changing_pass(update, context)
+
+    elif state == State.WAITING_NEW_PASS:
+        return await set_new_password(update, context)
+
+    else:
+        return await context.bot.send_message(
+            chat_id=user,
+            text="Unexpected type of data⚠️",
+            parse_mode="html"
+        )
+
 
 dictionary_query = {
     # Sending Posts
