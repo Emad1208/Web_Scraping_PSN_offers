@@ -29,11 +29,18 @@ class State:
 
 
 def delete_DB():
+    global is_sending, sending_task, status_send
     db_path = r"D:\Drive D\Python\Exercise_WebScraping\PSN\games.db"
 
     if os.path.exists(db_path):
         os.remove(db_path)
         print("Database removed successfully!")
+        
+        is_sending = False
+        status_send = None
+        if sending_task:
+            sending_task.cancel()
+        sending_task = None
     else:
         print("Database file not found.")
 
@@ -175,7 +182,7 @@ async def send_posts_loop(update, context):
                     chat_id=update.effective_chat.id,
                     text="DataBase is not exist ! ⚠️"
                 )
-                await asyncio.sleep(1 * 3600 )  # repeating every one hour
+                await asyncio.sleep(1 * 10 )  # repeating every one hour
                 continue
 
               
@@ -257,7 +264,7 @@ async def extracting_yes_now(query, update, context):
 
 
 async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):   
-    global pass_word_admin, is_sending, sending_task
+    global pass_word_admin, is_sending, sending_task,status_send
     user = update.effective_user.id
 
     if user in waiting_for_time and waiting_for_time[user]["state"] == State.WAITING_PASSWORD:
@@ -287,10 +294,15 @@ async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if action == "stop_sending":
             if is_sending:
+            #     is_sending = False
+            #     if sending_task:
+            #         sending_task.cancel()
+            #         sending_task = None
                 is_sending = False
+                status_send = None
                 if sending_task:
                     sending_task.cancel()
-                    sending_task = None
+                sending_task = None
                 
                 await context.bot.send_message(
                     chat_id=user,
@@ -374,7 +386,7 @@ async def get_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if hours < 1 or hours > 24:
                     await context.bot.send_message(chat_id= user, text= '<b>Your number must be between 1 and 24</b>',parse_mode='html')
                 else:
-                    waiting_for_time[user] = False
+                    waiting_for_time.pop(user, None)
                     await context.bot.send_message(chat_id= user, text='<b>Your data extracting will be repeated evry {} hours</b>'.format(hours),
                         parse_mode='html')
                     status_ex = asyncio.create_task(start_scraper(hours))
@@ -390,14 +402,14 @@ async def get_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if minutes < 10 or minutes > 60:
                     await context.bot.send_message(chat_id= user, text= '<b>Your number must be between 10 and 60</b>',parse_mode='html')
                 else:
-                    waiting_for_time[user] = False
+                    waiting_for_time.pop(user, None)
                     is_sending = True
             # create a task
                     sending_task = asyncio.create_task(send_posts_loop(update, context))
                     await context.bot.send_message(chat_id= user, 
                             text='<b>Your sending process will be repeated evry {} minutes</b>\n<b>The start sending posts is active! ✅</b>'.format(minutes),
                         parse_mode='html')
-                    status_send = minutes * 60
+                    status_send = minutes * 1
             except ValueError:
                 await context.bot.send_message(chat_id= user , text='<b>Please just enter a number</b>',
                     parse_mode='html')    
