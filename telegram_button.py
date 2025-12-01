@@ -182,7 +182,7 @@ async def send_posts_loop(update, context):
                     chat_id=update.effective_chat.id,
                     text="DataBase is not exist ! ⚠️"
                 )
-                await asyncio.sleep(1 * 10 )  # repeating every one hour
+                await asyncio.sleep(1 * 3600 )  # repeating every one hour
                 continue
 
               
@@ -294,10 +294,6 @@ async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if action == "stop_sending":
             if is_sending:
-            #     is_sending = False
-            #     if sending_task:
-            #         sending_task.cancel()
-            #         sending_task = None
                 is_sending = False
                 status_send = None
                 if sending_task:
@@ -409,7 +405,7 @@ async def get_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(chat_id= user, 
                             text='<b>Your sending process will be repeated evry {} minutes</b>\n<b>The start sending posts is active! ✅</b>'.format(minutes),
                         parse_mode='html')
-                    status_send = minutes * 1
+                    status_send = minutes * 60
             except ValueError:
                 await context.bot.send_message(chat_id= user , text='<b>Please just enter a number</b>',
                     parse_mode='html')    
