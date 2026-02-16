@@ -209,15 +209,8 @@ async def main():
         print(row)   
     save_to_db(flat)
 
-
-def job():
-    conn_1 = sqlite3.connect('games_1.db')
-    cursor_1 = conn_1.cursor()
-
-    conn = sqlite3.connect('games.db')
-    cursor = conn.cursor()
-
-    cursor_1.execute('''
+def create_table(cursor):
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS games(
         title TEXT,
         link TEXT,
@@ -231,7 +224,20 @@ def job():
         status INT DEFAULT 0
     )
     ''')
+
+
+def job():
+    conn_1 = sqlite3.connect('games_1.db')
+    cursor_1 = conn_1.cursor()
+
+    conn = sqlite3.connect('games.db')
+    cursor = conn.cursor()
+    create_table(cursor)
+    create_table(cursor_1)
+    conn.commit()
     conn_1.commit()
+
+
     print("Job started...")
     # run main code
     asyncio.run(main())  
@@ -250,7 +256,7 @@ async def start_scraper(hours: int):
     schedule.clear()
 
     # deponding on job function extract by timing 
-    schedule.every(hours).minutes.do(job)
+    schedule.every(hours).hours.do(job)
     print(f"⏳ Scraper scheduled every {hours} hours.")
 
     while not stop_ex:
