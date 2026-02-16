@@ -34,7 +34,7 @@ A Telegram bot that automatically collects and posts the latest offers from the 
 1. Set up a Python virtual environment and install dependencies:
    Copy code
 
-'''Bash
+```bash
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
