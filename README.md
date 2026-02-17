@@ -37,7 +37,7 @@ A Telegram bot that automatically collects and posts the latest offers from the 
 ```bash
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
-pip install -r requirements.txt
+pip install -r installed_packages.txt
 ```
 2. Configure the bot settings (API keys, channel ID, database connection).
 
