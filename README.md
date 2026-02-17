@@ -38,7 +38,7 @@ A Telegram bot that automatically collects and posts the latest offers from the 
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
-
+```
 2. Configure the bot settings (API keys, channel ID, database connection).
 
 3. Run the bot and the Telegram poster module.
